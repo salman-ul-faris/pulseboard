@@ -1,10 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
 import api from '../services/api.js';
-import { User, Palette, Bell, Shield, Check, AlertCircle, Save, LogOut } from 'lucide-react';
+import { 
+  User, 
+  Palette, 
+  Bell, 
+  Shield, 
+  Check, 
+  AlertCircle, 
+  Save, 
+  LogOut, 
+  Camera, 
+  Trash2, 
+  Upload, 
+  X,
+  RefreshCw 
+} from 'lucide-react';
 
 export default function SettingsPage({ onToggleSidebar }) {
   const { user, logout, updateUserLocally } = useAuth();
+  const fileInputRef = useRef(null);
 
   const [activeTab, setActiveTab] = useState('profile');
   const [loading, setLoading] = useState(true);
@@ -12,9 +27,16 @@ export default function SettingsPage({ onToggleSidebar }) {
   const [message, setMessage] = useState(null);
   const [error, setError] = useState(null);
 
-  // Profile form
+  // Profile fields
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+
+  // Profile Picture state
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarRemoving, setAvatarRemoving] = useState(false);
+  const [avatarError, setAvatarError] = useState(null);
 
   // Appearance & Preferences
   const [theme, setTheme] = useState('dark');
@@ -24,6 +46,12 @@ export default function SettingsPage({ onToggleSidebar }) {
 
   useEffect(() => {
     loadSettings();
+    return () => {
+      // Clean up object URL if component unmounts
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
   }, []);
 
   async function loadSettings() {
@@ -39,6 +67,10 @@ export default function SettingsPage({ onToggleSidebar }) {
       setTaskRemindersEnabled(Boolean(s.taskRemindersEnabled));
       setCompletionNotificationsEnabled(Boolean(s.completionNotificationsEnabled));
 
+      if (s.avatarUrl && s.avatarUrl !== user?.avatarUrl) {
+        updateUserLocally({ avatarUrl: s.avatarUrl });
+      }
+
       // Synchronize DOM class for reduced motion immediately
       if (s.reducedMotion) {
         document.body.classList.add('reduced-motion');
@@ -49,6 +81,97 @@ export default function SettingsPage({ onToggleSidebar }) {
       setError('Failed to load user settings');
     } finally {
       setLoading(false);
+    }
+  }
+
+  // Handle local file selection and create client-side preview
+  function handleFileSelect(e) {
+    const file = e.target.files?.[0];
+    setAvatarError(null);
+    setMessage(null);
+
+    if (!file) return;
+
+    // Validate file type
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowedTypes.includes(file.type.toLowerCase())) {
+      setAvatarError('Unsupported file type. Please select a JPEG, PNG, or WebP raster image.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    // Validate file size (5 MB limit)
+    const MAX_SIZE = 5 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      setAvatarError(`Image size (${(file.size / (1024 * 1024)).toFixed(1)} MB) exceeds the 5 MB limit.`);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
+    // Revoke previous preview URL if any
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+
+    const objectUrl = URL.createObjectURL(file);
+    setSelectedFile(file);
+    setPreviewUrl(objectUrl);
+  }
+
+  function handleCancelPreview() {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+    setSelectedFile(null);
+    setPreviewUrl(null);
+    setAvatarError(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  }
+
+  // Upload or replace profile picture to backend
+  async function handleSaveAvatar() {
+    if (!selectedFile) return;
+
+    setAvatarUploading(true);
+    setAvatarError(null);
+    setMessage(null);
+
+    const formData = new FormData();
+    formData.append('avatar', selectedFile);
+
+    try {
+      const res = await api.settings.uploadProfilePicture(formData);
+      updateUserLocally({ avatarUrl: res.avatarUrl });
+      setMessage('Profile picture updated and saved successfully.');
+      handleCancelPreview();
+    } catch (err) {
+      setAvatarError(err.message || 'Failed to upload profile picture.');
+    } finally {
+      setAvatarUploading(false);
+    }
+  }
+
+  // Remove profile picture and restore initials
+  async function handleRemoveAvatar() {
+    if (!window.confirm('Are you sure you want to remove your profile picture and restore the default avatar?')) {
+      return;
+    }
+
+    setAvatarRemoving(true);
+    setAvatarError(null);
+    setMessage(null);
+
+    try {
+      await api.settings.deleteProfilePicture();
+      updateUserLocally({ avatarUrl: null });
+      setMessage('Profile picture removed successfully.');
+      handleCancelPreview();
+    } catch (err) {
+      setAvatarError(err.message || 'Failed to remove profile picture.');
+    } finally {
+      setAvatarRemoving(false);
     }
   }
 
@@ -67,7 +190,7 @@ export default function SettingsPage({ onToggleSidebar }) {
         completionNotificationsEnabled,
       };
 
-      const res = await api.settings.update(updates);
+      await api.settings.update(updates);
       setMessage('Settings updated and saved successfully.');
 
       // Update auth context display name
@@ -87,6 +210,8 @@ export default function SettingsPage({ onToggleSidebar }) {
       setSaving(false);
     }
   }
+
+  const currentDisplayAvatar = previewUrl || user?.avatarUrl;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto' }}>
@@ -171,6 +296,7 @@ export default function SettingsPage({ onToggleSidebar }) {
                   setActiveTab(tab.id);
                   setMessage(null);
                   setError(null);
+                  setAvatarError(null);
                 }}
                 style={{
                   display: 'flex',
@@ -197,61 +323,254 @@ export default function SettingsPage({ onToggleSidebar }) {
 
         {/* TAB 1: Profile */}
         {activeTab === 'profile' && (
-          <div className="card">
-            <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '6px' }}>Public Profile</h2>
-            <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
-              Your profile information is used for workspace identification and collaboration.
-            </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            {/* Profile Picture Card */}
+            <div className="card">
+              <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '6px' }}>Profile Picture</h2>
+              <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
+                Upload a custom picture to personalize your workspace presence. Accepted formats: JPEG, PNG, WebP (max 5 MB).
+              </p>
 
-            <form onSubmit={handleSaveSettings}>
-              <div className="form-group">
-                <label className="form-label" htmlFor="settings-name">
-                  Display Name
-                </label>
-                <input
-                  id="settings-name"
-                  type="text"
-                  className="form-input"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Enter your name"
-                />
-              </div>
-
-              <div className="form-group">
-                <label className="form-label" htmlFor="settings-email">
-                  Email Address
-                </label>
-                <input
-                  id="settings-email"
-                  type="email"
-                  className="form-input"
-                  value={email}
-                  disabled
-                  style={{ opacity: 0.65, cursor: 'not-allowed' }}
-                />
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                  Email address is linked to your primary session and cannot be modified.
-                </span>
-              </div>
-
-              <div style={{ display: 'flex', gap: '10px', marginTop: '24px' }}>
-                <button id="btn-save-profile" type="submit" className="btn btn-primary" disabled={saving}>
-                  <Save size={16} />
-                  <span>{saving ? 'Saving...' : 'Save Profile'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setName(user?.name || '');
-                    setMessage(null);
+              {avatarError && (
+                <div
+                  style={{
+                    padding: '10px 14px',
+                    borderRadius: 'var(--radius-md)',
+                    background: 'rgba(255, 92, 92, 0.12)',
+                    border: '1px solid rgba(255, 92, 92, 0.3)',
+                    color: 'var(--accent-coral)',
+                    fontSize: '0.8125rem',
+                    marginBottom: '18px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
                   }}
-                  className="btn btn-secondary"
                 >
-                  Cancel
-                </button>
+                  <AlertCircle size={15} />
+                  <span>{avatarError}</span>
+                </div>
+              )}
+
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '24px',
+                  flexWrap: 'wrap',
+                }}
+              >
+                {/* Avatar Display Frame */}
+                <div style={{ position: 'relative' }}>
+                  <div
+                    style={{
+                      width: '84px',
+                      height: '84px',
+                      borderRadius: '20px',
+                      border: previewUrl
+                        ? '2px dashed var(--accent-primary)'
+                        : '2px solid var(--border-accent)',
+                      background: 'rgba(11, 18, 32, 0.8)',
+                      overflow: 'hidden',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      boxShadow: '0 0 20px rgba(56, 242, 165, 0.12)',
+                    }}
+                  >
+                    {currentDisplayAvatar ? (
+                      <img
+                        src={currentDisplayAvatar}
+                        alt="Profile avatar preview"
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        onError={(e) => {
+                          e.currentTarget.style.display = 'none';
+                          const fallback = e.currentTarget.parentElement.querySelector('.avatar-large-fallback');
+                          if (fallback) fallback.style.display = 'flex';
+                        }}
+                      />
+                    ) : null}
+
+                    <div
+                      className="avatar-large-fallback"
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        display: currentDisplayAvatar ? 'none' : 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '2rem',
+                        fontWeight: 700,
+                        background: 'linear-gradient(135deg, #38F2A5 0%, #54C8E8 100%)',
+                        color: '#070B12',
+                      }}
+                    >
+                      {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+                    </div>
+                  </div>
+
+                  {previewUrl && (
+                    <span
+                      style={{
+                        position: 'absolute',
+                        bottom: '-8px',
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        fontSize: '0.625rem',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
+                        background: 'var(--accent-primary)',
+                        color: '#070B12',
+                        padding: '2px 6px',
+                        borderRadius: 'var(--radius-full)',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      Preview
+                    </span>
+                  )}
+                </div>
+
+                {/* Upload & Action Controls */}
+                <div style={{ flex: 1, minWidth: '220px' }}>
+                  <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileSelect}
+                    accept="image/jpeg,image/png,image/webp"
+                    style={{ display: 'none' }}
+                    id="profile-picture-input"
+                  />
+
+                  {previewUrl ? (
+                    /* Preview Actions: Save or Cancel */
+                    <div>
+                      <div style={{ fontSize: '0.8125rem', color: 'var(--text-primary)', marginBottom: '10px', fontWeight: 500 }}>
+                        Image selected: <span style={{ color: 'var(--accent-primary)' }}>{selectedFile?.name}</span>
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                        <button
+                          id="btn-save-avatar"
+                          type="button"
+                          onClick={handleSaveAvatar}
+                          className="btn btn-primary btn-sm"
+                          disabled={avatarUploading}
+                        >
+                          {avatarUploading ? (
+                            <>
+                              <RefreshCw size={14} className="spin" />
+                              <span>Uploading...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Save size={14} />
+                              <span>Save Picture</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleCancelPreview}
+                          className="btn btn-secondary btn-sm"
+                          disabled={avatarUploading}
+                        >
+                          <X size={14} />
+                          <span>Cancel</span>
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Default Actions: Upload / Change & Remove */
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                      <button
+                        id="btn-upload-avatar"
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        className="btn btn-outline btn-sm"
+                      >
+                        <Camera size={14} />
+                        <span>{user?.avatarUrl ? 'Change Picture' : 'Upload Picture'}</span>
+                      </button>
+
+                      {user?.avatarUrl && (
+                        <button
+                          id="btn-remove-avatar"
+                          type="button"
+                          onClick={handleRemoveAvatar}
+                          className="btn btn-danger btn-sm"
+                          disabled={avatarRemoving}
+                        >
+                          <Trash2 size={14} />
+                          <span>{avatarRemoving ? 'Removing...' : 'Remove Picture'}</span>
+                        </button>
+                      )}
+                    </div>
+                  )}
+
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '10px' }}>
+                    Uploaded images are automatically sanitized, centered, and optimized for fast display.
+                  </div>
+                </div>
               </div>
-            </form>
+            </div>
+
+            {/* Profile Form Details */}
+            <div className="card">
+              <h2 style={{ fontSize: '1.125rem', fontWeight: 600, marginBottom: '6px' }}>Public Information</h2>
+              <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginBottom: '20px' }}>
+                Your display name is visible across shared task workspaces and activity feeds.
+              </p>
+
+              <form onSubmit={handleSaveSettings}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="settings-name">
+                    Display Name
+                  </label>
+                  <input
+                    id="settings-name"
+                    type="text"
+                    className="form-input"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Enter your name"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="settings-email">
+                    Email Address
+                  </label>
+                  <input
+                    id="settings-email"
+                    type="email"
+                    className="form-input"
+                    value={email}
+                    disabled
+                    style={{ opacity: 0.65, cursor: 'not-allowed' }}
+                  />
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                    Email address is tied to your login identity and cannot be modified.
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', gap: '10px', marginTop: '24px' }}>
+                  <button id="btn-save-profile" type="submit" className="btn btn-primary" disabled={saving}>
+                    <Save size={16} />
+                    <span>{saving ? 'Saving...' : 'Save Profile'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setName(user?.name || '');
+                      setMessage(null);
+                    }}
+                    className="btn btn-secondary"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         )}
 

@@ -194,14 +194,34 @@ export default function Sidebar({ currentView, setCurrentView, currentFilter, se
               marginBottom: '10px',
             }}
           >
+            {user?.avatarUrl && (
+              <img
+                src={user.avatarUrl}
+                alt={user?.name || 'User profile'}
+                style={{
+                  width: '34px',
+                  height: '34px',
+                  borderRadius: '8px',
+                  objectFit: 'cover',
+                  border: '1.5px solid var(--accent-primary)',
+                  flexShrink: 0,
+                }}
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  const fallback = e.currentTarget.parentElement.querySelector('.avatar-initials-fallback');
+                  if (fallback) fallback.style.display = 'flex';
+                }}
+              />
+            )}
             <div
+              className="avatar-initials-fallback"
               style={{
                 width: '34px',
                 height: '34px',
                 borderRadius: '8px',
                 background: 'linear-gradient(135deg, #38F2A5 0%, #54C8E8 100%)',
                 color: '#070B12',
-                display: 'flex',
+                display: user?.avatarUrl ? 'none' : 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
                 fontWeight: 700,

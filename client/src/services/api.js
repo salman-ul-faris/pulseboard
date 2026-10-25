@@ -61,6 +61,30 @@ export const api = {
   settings: {
     get: () => request('/settings', { method: 'GET' }),
     update: (settingsData) => request('/settings', { method: 'PATCH', body: JSON.stringify(settingsData) }),
+    uploadProfilePicture: async (formData) => {
+      const url = `${BASE_URL}/settings/profile-picture`;
+      try {
+        const response = await fetch(url, {
+          method: 'POST',
+          body: formData,
+          credentials: 'include',
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const error = new Error(data.message || data.error || `Upload failed with status ${response.status}`);
+          error.status = response.status;
+          error.data = data;
+          throw error;
+        }
+        return data;
+      } catch (err) {
+        if (err.status !== undefined) throw err;
+        const netErr = new Error('Network error: Unable to upload profile picture to backend.');
+        netErr.status = 0;
+        throw netErr;
+      }
+    },
+    deleteProfilePicture: () => request('/settings/profile-picture', { method: 'DELETE' }),
   },
   health: {
     check: () => request('/health', { method: 'GET' }),

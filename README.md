@@ -70,6 +70,8 @@ The database runs on PostgreSQL (and embedded PGlite for zero-config local runs)
 - `name` (VARCHAR 255)
 - `email` (VARCHAR 255, Unique, Indexed)
 - `password_hash` (VARCHAR 255, bcrypt 12 salt rounds)
+- `avatar_url` (TEXT, Nullable — Persistent image URL)
+- `avatar_key` (VARCHAR 255, Nullable — Storage object identifier for secure lifecycle management)
 - `created_at` (TIMESTAMPTZ)
 - `updated_at` (TIMESTAMPTZ)
 
@@ -114,12 +116,14 @@ The database runs on PostgreSQL (and embedded PGlite for zero-config local runs)
 - `PATCH /api/tasks/:id` — Update allowed fields (`title`, `description`, `completed`, `priority`, `dueDate`).
 - `DELETE /api/tasks/:id` — Delete task (strictly scoped to owner).
 
-### Settings
-- `GET /api/settings` — Returns user profile and persistent settings.
+### Settings & Profile Picture
+- `GET /api/settings` — Returns user profile, avatar URL, and persistent settings.
 - `PATCH /api/settings` — Persists updates to user profile name and preferences (e.g. `reducedMotion`).
+- `POST /api/settings/profile-picture` — Securely uploads or replaces authenticated user's avatar. Enforces authentication, magic byte signature validation, raster-only allowlist (JPEG, PNG, WebP), SVG/executable rejection, 5 MB file size limit, dimension safety & decompression-bomb limits, safe re-encoding to 400x400 WebP via Sharp, rate limiting, and failure-safe database updates and atomic cleanup.
+- `DELETE /api/settings/profile-picture` — Removes the authenticated user's picture, safely destroys the stored object, resets database fields to null, and restores default initials.
 
 ### System Health
-- `GET /api/health` — Returns JSON with service uptime and database connection status without leaking credentials or stack traces.
+- `GET /api/health` — Returns JSON with service uptime, database connection status, and storage provider mode (`cloudinary` vs local persistent fallback) without leaking credentials or stack traces.
 
 ---
 
@@ -156,12 +160,14 @@ Open [http://localhost:5000](http://localhost:5000) in your browser.
 
 ## 6. Automated Testing
 
-Run the automated test suite verifying all 12 critical acceptance criteria:
+Run the full automated test suite verifying all 23 critical acceptance criteria (Core Platform + Security & Profile Picture):
 ```bash
 npm test
 ```
 
-### Verified Test Cases:
+### Verified Test Cases (23 Passing Tests):
+
+**Platform & Security Tests (`server/tests/api.test.js`):**
 1. `Registration creates a user with a password hash and safe user object`
 2. `Duplicate email registration is rejected`
 3. `Valid login succeeds and sets session cookie`
@@ -174,6 +180,19 @@ npm test
 10. `Settings persist correctly`
 11. `Dashboard metrics match actual task records`
 12. `Database errors and health endpoint do not expose secrets or stack traces`
+
+**Profile Picture Security Tests (`server/tests/avatar.test.js`):**
+13. `Authenticated user can upload a valid PNG profile picture`
+14. `Stored avatar URL persists across subsequent GET /api/settings calls`
+15. `Authenticated user can replace an existing avatar with a new image`
+16. `Authenticated user can remove their avatar, clearing URL and deleting storage object`
+17. `Unauthenticated upload request is rejected with 401 Unauthorized`
+18. `Fake image payload with valid extension is rejected by signature validation`
+19. `SVG files and active content are strictly rejected`
+20. `Files exceeding the 5 MB size limit are rejected with 400 Bad Request`
+21. `Cross-user isolation: User B cannot delete User A's avatar`
+22. `Upload and storage errors do not leak stack traces or server paths`
+23. `Failure-safe replacement: DB failure leaves the previous avatar intact without orphan destruction`
 
 ---
 
@@ -219,6 +238,9 @@ To push your local repository to GitHub:
    - `CLIENT_ORIGIN`: `https://<YOUR_VERCEL_APP>.vercel.app`
    - `COOKIE_SECURE`: `true`
    - `COOKIE_SAMESITE`: `none`
+   - `CLOUDINARY_CLOUD_NAME`: *(Your Cloudinary Cloud Name)*
+   - `CLOUDINARY_API_KEY`: *(Your Cloudinary API Key)*
+   - `CLOUDINARY_API_SECRET`: *(Your Cloudinary API Secret)*
 5. Click **Deploy Web Service**.
 6. Note your backend URL (e.g., `https://pulseboard-api.onrender.com`).
 

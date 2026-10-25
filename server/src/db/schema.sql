@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS users (
   name VARCHAR(255) NOT NULL,
   email VARCHAR(255) NOT NULL UNIQUE,
   password_hash VARCHAR(255) NOT NULL,
+  avatar_url TEXT,
+  avatar_key VARCHAR(255),
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -37,6 +39,10 @@ CREATE TABLE IF NOT EXISTS "session" (
   "sess" JSON NOT NULL,
   "expire" TIMESTAMP(6) NOT NULL
 );
+
+-- Ensure avatar columns exist on existing databases
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_key VARCHAR(255);
 
 CREATE INDEX IF NOT EXISTS idx_tasks_user_id ON tasks(user_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_user_completed ON tasks(user_id, completed);

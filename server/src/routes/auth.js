@@ -27,7 +27,7 @@ router.post('/register', validate(registerSchema), async (req, res, next) => {
     const userResult = await query(
       `INSERT INTO users (name, email, password_hash)
        VALUES ($1, $2, $3)
-       RETURNING id, name, email, created_at`,
+       RETURNING id, name, email, avatar_url, created_at`,
       [name, email, passwordHash]
     );
 
@@ -51,6 +51,7 @@ router.post('/register', validate(registerSchema), async (req, res, next) => {
           id: user.id,
           name: user.name,
           email: user.email,
+          avatarUrl: user.avatar_url || null,
           createdAt: user.created_at,
         },
       });
@@ -65,9 +66,9 @@ router.post('/login', validate(loginSchema), async (req, res, next) => {
   try {
     const { email, password } = req.validatedBody;
 
-    // Fetch user with hashed password
+    // Fetch user with hashed password and avatar_url
     const result = await query(
-      'SELECT id, name, email, password_hash, created_at FROM users WHERE email = $1',
+      'SELECT id, name, email, password_hash, avatar_url, created_at FROM users WHERE email = $1',
       [email]
     );
 
@@ -98,6 +99,7 @@ router.post('/login', validate(loginSchema), async (req, res, next) => {
           id: user.id,
           name: user.name,
           email: user.email,
+          avatarUrl: user.avatar_url || null,
           createdAt: user.created_at,
         },
       });
@@ -132,7 +134,7 @@ router.get('/me', async (req, res, next) => {
     }
 
     const result = await query(
-      'SELECT id, name, email, created_at FROM users WHERE id = $1',
+      'SELECT id, name, email, avatar_url, created_at FROM users WHERE id = $1',
       [req.session.userId]
     );
 
@@ -152,6 +154,7 @@ router.get('/me', async (req, res, next) => {
         id: user.id,
         name: user.name,
         email: user.email,
+        avatarUrl: user.avatar_url || null,
         createdAt: user.created_at,
       },
     });

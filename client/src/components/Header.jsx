@@ -68,7 +68,7 @@ export default function Header({ onOpenCreateTask, onToggleSidebar }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
         <button
           id="btn-create-task-header"
           onClick={onOpenCreateTask}
@@ -78,6 +78,51 @@ export default function Header({ onOpenCreateTask, onToggleSidebar }) {
           <Plus size={18} />
           <span>Create Task</span>
         </button>
+
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '38px',
+            height: '38px',
+            borderRadius: '10px',
+            border: '1.5px solid var(--border-accent)',
+            background: 'var(--bg-card)',
+            overflow: 'hidden',
+            boxShadow: '0 0 10px rgba(56, 242, 165, 0.1)',
+          }}
+          title={user?.name || 'User profile'}
+        >
+          {user?.avatarUrl && (
+            <img
+              src={user.avatarUrl}
+              alt={user?.name || 'User profile'}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              onError={(e) => {
+                e.currentTarget.style.display = 'none';
+                const fallback = e.currentTarget.parentElement.querySelector('.header-avatar-fallback');
+                if (fallback) fallback.style.display = 'flex';
+              }}
+            />
+          )}
+          <div
+            className="header-avatar-fallback"
+            style={{
+              width: '100%',
+              height: '100%',
+              display: user?.avatarUrl ? 'none' : 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontWeight: 700,
+              fontSize: '0.875rem',
+              color: 'var(--accent-primary)',
+              background: 'rgba(56, 242, 165, 0.1)',
+            }}
+          >
+            {user?.name ? user.name.charAt(0).toUpperCase() : 'U'}
+          </div>
+        </div>
       </div>
 
       <style>{`

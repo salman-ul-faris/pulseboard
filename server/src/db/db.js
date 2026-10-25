@@ -47,16 +47,46 @@ export async function getDb() {
   // Fallback to embedded PGlite (real Postgres engine in Node WASM with persistence)
   try {
     const { PGlite } = await import('@electric-sql/pglite');
-    const dataDir = path.resolve(__dirname, '../../../data/pglite');
+    let dataDir = process.env.PGLITE_DATA_DIR;
+    if (!dataDir) {
+      const workspacePath = path.resolve(__dirname, '../../../data/pglite');
+      // If path contains parentheses, use LOCALAPPDATA / TEMP to avoid Emscripten WASM aborts
+      if (workspacePath.includes('(') || workspacePath.includes(')')) {
+        dataDir = path.join(process.env.LOCALAPPDATA || process.env.TEMP || 'C:/Users/Public', 'pulseboard_pglite');
+      } else {
+        dataDir = workspacePath;
+      }
+    }
+
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
+    } else {
+      // Clean up stale lock files from previous abnormal terminations
+      const lockFiles = ['postmaster.pid', '.s.PGSQL.5432.lock', '.s.PGSQL.5432.lock.out'];
+      for (const lf of lockFiles) {
+        const fullPath = path.join(dataDir, lf);
+        if (fs.existsSync(fullPath)) {
+          try { fs.unlinkSync(fullPath); } catch (_) {}
+        }
+      }
     }
-    pgliteInstance = new PGlite(dataDir);
-    await pgliteInstance.waitReady;
-    isConnected = true;
-    dbEngine = 'pglite';
-    console.log(`[DB] Connected to embedded PostgreSQL engine (PGlite) at ${dataDir}`);
-    return { query, pool: null, dbEngine };
+
+    try {
+      pgliteInstance = new PGlite(dataDir);
+      await pgliteInstance.waitReady;
+      isConnected = true;
+      dbEngine = 'pglite';
+      console.log(`[DB] Connected to embedded PostgreSQL engine (PGlite) at ${dataDir}`);
+      return { query, pool: null, dbEngine };
+    } catch (fsErr) {
+      console.warn('[DB] Persistent PGlite initialization failed, falling back to in-memory PGlite:', fsErr.message);
+      pgliteInstance = new PGlite();
+      await pgliteInstance.waitReady;
+      isConnected = true;
+      dbEngine = 'pglite-memory';
+      console.log('[DB] Connected to in-memory embedded PostgreSQL engine (PGlite)');
+      return { query, pool: null, dbEngine };
+    }
   } catch (err) {
     console.error('[DB] Failed to initialize embedded database engine:', err);
     throw err;

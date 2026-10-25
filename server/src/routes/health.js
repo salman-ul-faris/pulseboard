@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { checkHealth } from '../db/db.js';
+import { isStorageCloudConfigured } from '../services/storage.js';
 
 const router = Router();
 
@@ -18,6 +19,10 @@ router.get('/', async (req, res) => {
     database: {
       status: dbHealth.status,
       engine: dbHealth.engine,
+    },
+    storage: {
+      provider: isStorageCloudConfigured() ? 'cloudinary' : 'local',
+      cloudConfigured: isStorageCloudConfigured(),
     },
   });
 });

@@ -24,7 +24,7 @@ export function createApp() {
   // Trust reverse proxy for Render / Cloudflare / Vercel HTTPS propagation
   app.set('trust proxy', 1);
 
-  // Security headers
+  // Security headers: permit Cloudinary CDN for profile pictures in imgSrc
   app.use(
     helmet({
       contentSecurityPolicy: {
@@ -32,7 +32,7 @@ export function createApp() {
           defaultSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
-          imgSrc: ["'self'", 'data:', 'blob:'],
+          imgSrc: ["'self'", 'data:', 'blob:', 'https://res.cloudinary.com', 'https://*.cloudinary.com'],
           scriptSrc: ["'self'", "'unsafe-inline'"],
           connectSrc: ["'self'", 'http://localhost:*', 'https://*'],
         },
@@ -45,8 +45,10 @@ export function createApp() {
   const allowedOrigins = [
     process.env.CLIENT_ORIGIN,
     'http://localhost:5173',
+    'http://localhost:5000',
     'http://localhost:3000',
     'http://127.0.0.1:5173',
+    'http://127.0.0.1:5000',
   ].filter(Boolean);
 
   const isOriginAllowed = (origin) => {
@@ -62,7 +64,7 @@ export function createApp() {
         if (isOriginAllowed(origin)) {
           return callback(null, true);
         }
-        return callback(new Error(`CORS origin ${origin} not permitted`));
+        return callback(null, false);
       },
       credentials: true,
       methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -136,9 +138,34 @@ export function createApp() {
     },
   });
 
+  // Dedicated rate limiter for avatar uploads and removals (prevents storage quota abuse)
+  const avatarLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30, // 30 avatar operations per 15 minutes
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      error: 'Too Many Requests',
+      message: 'Too many profile picture update requests. Please wait a few minutes.',
+    },
+  });
+
+  // Safe static serving for local avatar storage fallback (development / testing)
+  const localUploadsDir = path.resolve(__dirname, '../../../data/uploads/avatars');
+  if (fs.existsSync(localUploadsDir)) {
+    app.use('/api/uploads/avatars', express.static(localUploadsDir, {
+      maxAge: '1d',
+      setHeaders: (res) => {
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'; sandbox");
+      },
+    }));
+  }
+
   // Mount API routes
   app.use('/api/auth', authLimiter, authRoutes);
   app.use('/api/tasks', tasksRoutes);
+  app.use('/api/settings/profile-picture', avatarLimiter);
   app.use('/api/settings', settingsRoutes);
   app.use('/api/health', healthRoutes);
 
