@@ -1,40 +1,45 @@
 # PulseBoard — Precision Productivity & Task Intelligence Platform
 
-PulseBoard is a full-stack task management and productivity application engineered with a deep-navy aesthetic, electric-mint accents, real PostgreSQL persistence, and secure session-based authentication.
+PulseBoard is an enterprise-grade, full-stack productivity web application designed with a deep-navy aesthetic, electric-mint accents, real PostgreSQL persistence, and secure session authentication.
+
+The codebase is organized as a unified monorepo for dual deployment:
+- **Frontend** deployed on **Vercel** (`client/` root)
+- **Backend** deployed on **Render** (`server/` root) with managed **PostgreSQL**
 
 ---
 
-## 1. System Architecture
-
-PulseBoard uses a unified monorepo architecture designed for local development and single-service deployment to **Render** (or Vercel):
+## 1. Project Structure
 
 ```
 pulseboard/
-├── client/                     # React + Vite Frontend
+├── client/                     # Frontend (React + Vite) — Deployed to Vercel
 │   ├── src/
 │   │   ├── components/         # Logo, BackgroundWave, Header, Sidebar, TaskCard, TaskModal, SummaryCards
 │   │   ├── context/            # AuthContext (session, user, settings)
 │   │   ├── pages/              # LoginPage, RegisterPage, DashboardPage, SettingsPage
-│   │   ├── services/           # API fetch client with credentials support
+│   │   ├── services/           # API fetch client (VITE_API_URL + credentials: 'include')
 │   │   ├── App.jsx             # Shell & view orchestrator
 │   │   ├── index.css           # Design tokens, variables, & reduced-motion support
 │   │   └── main.jsx
 │   ├── index.html
+│   ├── vercel.json             # Vercel SPA rewrites & security headers
 │   ├── vite.config.js
+│   ├── .env.example
 │   └── package.json
-├── server/                     # Node.js + Express Backend
+├── server/                     # Backend (Node.js + Express) — Deployed to Render
 │   ├── src/
-│   │   ├── db/                 # DB connection pool (PostgreSQL + embedded PGlite fallback), migrations
+│   │   ├── db/                 # DB connection pool (PostgreSQL + PGlite fallback), migrations
 │   │   ├── middleware/         # Auth guard, Zod validation, error handler
 │   │   ├── routes/             # Auth, Tasks, Settings, Health
-│   │   ├── app.js              # Express app, Helmet, CORS, Sessions, Rate limits
-│   │   └── index.js            # Server entry point, DB migration bootstrapper
-│   ├── migrations/             # SQL migration files
+│   │   ├── app.js              # Express app, Helmet, CORS, Session Store, CSRF Origin check
+│   │   └── index.js            # Server entry point, DB auto-migration bootstrapper
+│   ├── migrations/             # SQL schema migrations (users, tasks, user_settings, session)
 │   ├── tests/                  # Automated test suite (12 critical acceptance tests)
+│   ├── .env.example
 │   └── package.json
-├── render.yaml                 # Render Blueprint deployment config
-├── .env.example
+├── render.yaml                 # Render Blueprint configuration
 ├── .gitignore
+├── .env.example
 ├── package.json                # Root orchestrator scripts
 └── README.md
 ```
@@ -43,16 +48,16 @@ pulseboard/
 
 ## 2. Brand Identity & UI Direction
 
-- **Palette**:
+- **Curated Palette**:
   - Primary Background: `#070B12` (Deep Space Navy)
-  - Secondary / Sidebar Background: `#0B1220`
+  - Secondary Background: `#0B1220` (Sidebar / Sections)
   - Card & Modal Background: `#101A2B`
   - Primary Accent: `#38F2A5` (Electric Mint)
-  - Secondary Accent: `#54C8E8` (Cyan)
-  - Coral / Warning: `#FF5C5C`
+  - Secondary Accent: `#54C8E8` (Cyan Highlights)
+  - Warning / Danger: `#FF5C5C` (Coral)
   - Text: `#F3F7FC` (Primary), `#9BA9BB` (Secondary), `#5E6D82` (Muted)
-- **Original Logo**: Geometric 2x2 board/grid motif intersected by a dynamic mint-cyan pulse wave line, with refined typography.
-- **Wave Background**: Lightweight SVG path animation with subtle glow; fully disables when `prefers-reduced-motion` is active or when user toggles Reduced Motion in Settings.
+- **Original Logo**: Geometric 2x2 board grid motif intersected by a mint-cyan pulse wave line, with refined typography.
+- **Wave Background**: Lightweight SVG path animation with subtle glow. Fully respects `prefers-reduced-motion` and user setting toggle.
 
 ---
 
@@ -87,6 +92,11 @@ The database runs on PostgreSQL (and embedded PGlite for zero-config local runs)
 - `completion_notifications_enabled` (BOOLEAN, Default `true`)
 - `updated_at` (TIMESTAMPTZ)
 
+### `session`
+- `sid` (VARCHAR, Primary Key)
+- `sess` (JSON)
+- `expire` (TIMESTAMP(6), Indexed)
+
 ---
 
 ## 4. API Endpoints
@@ -105,7 +115,7 @@ The database runs on PostgreSQL (and embedded PGlite for zero-config local runs)
 - `DELETE /api/tasks/:id` — Delete task (strictly scoped to owner).
 
 ### Settings
-- `GET /api/settings` — Returns user profile and preference settings.
+- `GET /api/settings` — Returns user profile and persistent settings.
 - `PATCH /api/settings` — Persists updates to user profile name and preferences (e.g. `reducedMotion`).
 
 ### System Health
@@ -122,36 +132,20 @@ The database runs on PostgreSQL (and embedded PGlite for zero-config local runs)
 ### Installation
 ```bash
 # Clone the repository
-git clone <repo-url> pulseboard
+git clone <your-repo-url> pulseboard
 cd pulseboard
 
-# Install all dependencies (root, server, client)
+# Install dependencies for root, server, and client
 npm run postinstall
 ```
 
-### Configuration
-Copy `.env.example` to `.env`:
-```bash
-cp .env.example .env
-```
-
-Default variables:
-```ini
-NODE_ENV=development
-PORT=5000
-DATABASE_URL=
-SESSION_SECRET=pulseboard_secret_encryption_key_change_in_production
-CLIENT_ORIGIN=http://localhost:5173
-```
-*Note: If `DATABASE_URL` is omitted, PulseBoard automatically boots an embedded PostgreSQL engine (PGlite) storing data in `./data/pglite/`.*
-
 ### Running in Development
 ```bash
-# Starts both Express API (:5000) and Vite (:5173) with proxying
+# Starts Express API (:5000) and Vite (:5173) with automatic proxying
 npm run dev
 ```
 
-### Running in Production Locally
+### Running the Production Server Locally
 ```bash
 npm run build
 npm start
@@ -183,16 +177,67 @@ npm test
 
 ---
 
-## 7. Render Deployment
+## 7. GitHub Repository Setup
 
-PulseBoard includes a ready-to-deploy `render.yaml` blueprint.
+To push your local repository to GitHub:
 
-### Deployment Steps:
-1. Push this repository to GitHub or GitLab.
-2. Log into [Render](https://render.com) and click **New + > Blueprint**.
-3. Select your repository.
-4. Render will automatically provision:
-   - **PostgreSQL Database** (`pulseboard-db`)
-   - **Node.js Web Service** (`pulseboard`)
-5. The build command will execute `npm install && npm run build` and start with `npm start`.
-6. Health checks will automatically monitor `/api/health`.
+1. Create a new empty repository on [GitHub](https://github.com/new) named `pulseboard`. Do not initialize it with a README, license, or .gitignore (these already exist locally).
+2. In your terminal at the root of `pulseboard`, run:
+   ```bash
+   git remote add origin https://github.com/<YOUR_GITHUB_USERNAME>/pulseboard.git
+   git push -u origin main
+   ```
+
+---
+
+## 8. Deployment: Render (Backend + PostgreSQL)
+
+### Step 1: Create PostgreSQL Database on Render
+1. Log into your [Render Dashboard](https://dashboard.render.com).
+2. Click **New +** > **PostgreSQL**.
+3. Name: `pulseboard-db`
+4. Database: `pulseboard`
+5. User: `pulseboard_user`
+6. Region: Choose the region closest to you.
+7. Click **Create Database**.
+8. Once provisioned, copy the **Internal Database URL** (or External if connecting remotely).
+
+### Step 2: Deploy Backend Web Service on Render
+1. In Render Dashboard, click **New +** > **Web Service**.
+2. Connect your GitHub repository `pulseboard`.
+3. Configure the service:
+   - **Name**: `pulseboard-api`
+   - **Root Directory**: `server`
+   - **Environment**: `Node`
+   - **Build Command**: `npm install`
+   - **Start Command**: `npm start`
+   - **Health Check Path**: `/api/health`
+4. Under **Environment Variables**, add:
+   - `NODE_ENV`: `production`
+   - `DATABASE_URL`: *(Paste the PostgreSQL connection string from Step 1)*
+   - `SESSION_SECRET`: *(A random 32+ character secret string)*
+   - `CLIENT_ORIGIN`: `https://<YOUR_VERCEL_APP>.vercel.app`
+   - `COOKIE_SECURE`: `true`
+   - `COOKIE_SAMESITE`: `none`
+5. Click **Deploy Web Service**.
+6. Note your backend URL (e.g., `https://pulseboard-api.onrender.com`).
+
+*(Alternatively, use the included [`render.yaml`](file:///e:/ai-project%20(riafy)/pulseboard/render.yaml) by creating a **Blueprint** on Render).*
+
+---
+
+## 9. Deployment: Vercel (Frontend)
+
+1. Log into your [Vercel Dashboard](https://vercel.com).
+2. Click **Add New...** > **Project**.
+3. Import your GitHub repository `pulseboard`.
+4. In the Project Configuration:
+   - **Framework Preset**: `Vite`
+   - **Root Directory**: Click *Edit* and select `client`
+   - **Build Command**: `npm run build` (or leave default)
+   - **Output Directory**: `dist`
+5. Under **Environment Variables**, add:
+   - `VITE_API_URL`: `https://pulseboard-api.onrender.com` *(Your Render backend URL)*
+6. Click **Deploy**.
+7. Vercel will build and deploy the frontend. Single-page navigation and URL refreshes are automatically handled via [`client/vercel.json`](file:///e:/ai-project%20(riafy)/pulseboard/client/vercel.json).
+8. Copy your live Vercel domain (e.g. `https://pulseboard.vercel.app`) and ensure it matches the `CLIENT_ORIGIN` variable in your Render backend settings.
