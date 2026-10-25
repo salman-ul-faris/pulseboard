@@ -1,11 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { fileURLToPath } from 'url';
 import { v2 as cloudinary } from 'cloudinary';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 export function isStorageCloudConfigured() {
   return Boolean(
@@ -32,7 +29,8 @@ function ensureCloudinaryConfigured() {
 ensureCloudinaryConfigured();
 
 // Local storage directory setup for dev / test fallback
-const localUploadsDir = path.resolve(__dirname, '../../../data/uploads/avatars');
+const localUploadsDir = path.resolve(process.cwd(), 'data/uploads/avatars');
+
 if (!isStorageCloudConfigured()) {
   if (!fs.existsSync(localUploadsDir)) {
     fs.mkdirSync(localUploadsDir, { recursive: true });

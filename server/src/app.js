@@ -6,7 +6,6 @@ import connectPgSimple from 'connect-pg-simple';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
 
 import authRoutes from './routes/auth.js';
 import tasksRoutes from './routes/tasks.js';
@@ -14,9 +13,6 @@ import settingsRoutes from './routes/settings.js';
 import healthRoutes from './routes/health.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { getPool } from './db/db.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 export function createApp() {
   const app = express();
@@ -171,7 +167,12 @@ export function createApp() {
 
 
   // Safe static serving for local avatar storage fallback (development / testing)
-  const localUploadsDir = path.resolve(__dirname, '../../../data/uploads/avatars');
+  const localUploadCandidates = [
+    path.resolve(process.cwd(), 'data/uploads/avatars'),
+    path.resolve(process.cwd(), '../data/uploads/avatars'),
+  ];
+  const localUploadsDir = localUploadCandidates.find((dir) => fs.existsSync(dir)) || localUploadCandidates[0];
+
   if (fs.existsSync(localUploadsDir)) {
     app.use('/api/uploads/avatars', express.static(localUploadsDir, {
       maxAge: '1d',
@@ -189,8 +190,13 @@ export function createApp() {
   app.use('/api/settings', settingsRoutes);
   app.use('/api/health', healthRoutes);
 
-  // Serve static client build if present (e.g. for Render single-service deployment)
-  const clientDist = path.resolve(__dirname, '../../client/dist');
+  // Serve static client build if present (e.g. for standalone local Express server)
+  const clientDistCandidates = [
+    path.resolve(process.cwd(), 'client/dist'),
+    path.resolve(process.cwd(), '../client/dist'),
+  ];
+  const clientDist = clientDistCandidates.find((dir) => fs.existsSync(dir)) || clientDistCandidates[0];
+
   if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist));
     app.get('*', (req, res, next) => {
@@ -200,6 +206,7 @@ export function createApp() {
       res.sendFile(path.join(clientDist, 'index.html'));
     });
   }
+
 
   // Central error handling middleware
   app.use(errorHandler);

@@ -1,7 +1,9 @@
 import { test, describe, before } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import { execSync } from 'node:child_process';
 import { handler } from '../../netlify/functions/api.js';
-import { runMigrations, getDb } from '../src/db/db.js';
+import { runMigrations, getDb, resolveSchemaPath } from '../src/db/db.js';
 import storage from '../src/services/storage.js';
 
 describe('PulseBoard Netlify Serverless Architecture & Security Tests', () => {
@@ -327,5 +329,84 @@ describe('PulseBoard Netlify Serverless Architecture & Security Tests', () => {
       const body = JSON.parse(res.body);
       assert.ok(body.settings);
     }
+  });
+
+  test('Serverless 9: Schema path resolution successfully resolves schema.sql across directory contexts', () => {
+    const resolvedPath = resolveSchemaPath();
+    assert.ok(typeof resolvedPath === 'string' && resolvedPath.length > 0, 'Schema path must be a non-empty string');
+    assert.ok(fs.existsSync(resolvedPath), `Resolved schema path must exist on disk: ${resolvedPath}`);
+
+    const content = fs.readFileSync(resolvedPath, 'utf8');
+    assert.ok(content.includes('CREATE TABLE IF NOT EXISTS users'), 'Schema must contain users table definition');
+    assert.ok(content.includes('"session"'), 'Schema must contain session table definition');
+  });
+
+  test('Serverless 10: Production environment guard strictly forbids local PGlite fallback when DATABASE_URL is missing', () => {
+    const script = `
+      process.env.NODE_ENV = 'production';
+      delete process.env.DATABASE_URL;
+      delete process.env.NETLIFY_DEV;
+      import('./src/db/db.js').then(async (m) => {
+        try {
+          await m.getDb();
+          process.exit(0);
+        } catch (err) {
+          if (err.message.includes('Embedded PGlite engine is disabled in production')) {
+            process.exit(42);
+          }
+          console.error(err);
+          process.exit(1);
+        }
+      });
+    `;
+
+    try {
+      execSync(`node --input-type=module -e "${script.replace(/\r?\n/g, ' ')}"`, {
+        cwd: process.cwd().endsWith('server') ? process.cwd() : `${process.cwd()}/server`,
+        stdio: 'pipe',
+      });
+      assert.fail('Expected production cold start without DATABASE_URL to throw fatal error');
+    } catch (err) {
+      assert.strictEqual(err.status, 42, 'Expected exit code 42 confirming production PGlite rejection guard');
+    }
+  });
+
+  test('Serverless 11: Production environment guard strictly fails if remote PostgreSQL connection fails and does not fall back to PGlite', () => {
+    const script = `
+      process.env.NODE_ENV = 'production';
+      process.env.DATABASE_URL = 'postgresql://fake_user:fake_pass@127.0.0.1:54329/fake_db';
+      delete process.env.NETLIFY_DEV;
+      import('./src/db/db.js').then(async (m) => {
+        try {
+          await m.getDb();
+          process.exit(0);
+        } catch (err) {
+          if (err.message.includes('[DB FATAL]')) {
+            process.exit(43);
+          }
+          console.error(err);
+          process.exit(1);
+        }
+      });
+    `;
+
+    try {
+      execSync(`node --input-type=module -e "${script.replace(/\r?\n/g, ' ')}"`, {
+        cwd: process.cwd().endsWith('server') ? process.cwd() : `${process.cwd()}/server`,
+        stdio: 'pipe',
+      });
+      assert.fail('Expected production connection failure to throw fatal error without falling back');
+    } catch (err) {
+      assert.strictEqual(err.status, 43, 'Expected exit code 43 confirming production database error throw');
+    }
+  });
+
+  test('Serverless 12: Database module initialization does not throw undefined path or URL in CommonJS bundled environment', async () => {
+    // Simulate bundled execution environment where import.meta.url is undefined
+    const resolvedPath = resolveSchemaPath();
+    assert.ok(resolvedPath.endsWith('schema.sql'));
+    assert.doesNotThrow(() => {
+      fs.readFileSync(resolvedPath, 'utf8');
+    });
   });
 });

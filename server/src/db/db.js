@@ -1,10 +1,6 @@
 import pg from 'pg';
 import path from 'path';
 import fs from 'fs';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 const { Pool } = pg;
 
@@ -13,21 +9,45 @@ let pgliteInstance = null;
 let isConnected = false;
 let dbEngine = 'unknown';
 
+// Resolve schema.sql path across development, test runners, and Netlify Functions
+export function resolveSchemaPath() {
+  const candidates = [
+    path.resolve(process.cwd(), 'server/src/db/schema.sql'),
+    path.resolve(process.cwd(), 'src/db/schema.sql'),
+    typeof __dirname !== 'undefined' ? path.resolve(__dirname, 'schema.sql') : null,
+    typeof __dirname !== 'undefined' ? path.resolve(__dirname, 'server/src/db/schema.sql') : null,
+    typeof __dirname !== 'undefined' ? path.resolve(__dirname, '../server/src/db/schema.sql') : null,
+    typeof __dirname !== 'undefined' ? path.resolve(__dirname, '../../server/src/db/schema.sql') : null,
+    path.resolve(process.cwd(), 'schema.sql'),
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0];
+}
+
 export async function getDb() {
   if (isConnected) {
     return { query, pool, dbEngine };
   }
 
   const databaseUrl = process.env.DATABASE_URL;
+  const isNetlifyDev = Boolean(process.env.NETLIFY_DEV);
+  const isNetlifyProd = Boolean(process.env.NETLIFY && !process.env.NETLIFY_DEV);
+  const isLambdaProd = Boolean(process.env.AWS_LAMBDA_FUNCTION_NAME && !process.env.NETLIFY_DEV);
   const isServerless = Boolean(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME);
-  const isProd = process.env.NODE_ENV === 'production' || isServerless;
+  const isProd = (process.env.NODE_ENV === 'production' || isNetlifyProd || isLambdaProd) && !isNetlifyDev;
 
   // In serverless, limit pool size to avoid exhausting PostgreSQL connection limits across function instances
   const poolMax = process.env.DB_POOL_MAX
     ? parseInt(process.env.DB_POOL_MAX, 10)
     : (isServerless ? 2 : 10);
 
-  if (databaseUrl && !databaseUrl.includes('localhost:5432') && !databaseUrl.includes('127.0.0.1:5432')) {
+
+  if (databaseUrl && (!databaseUrl.includes('localhost:5432') && !databaseUrl.includes('127.0.0.1:5432') || isProd)) {
     try {
       const isRemote = isProd || databaseUrl.includes('render.com') || databaseUrl.includes('neon.tech') || databaseUrl.includes('supabase.co');
       pool = new Pool({
@@ -63,10 +83,27 @@ export async function getDb() {
 
   // Fallback to embedded PGlite for local development and automated testing only
   try {
-    const { PGlite } = await import('@electric-sql/pglite');
+    let PGlite;
+    try {
+      const mod = await import('@electric-sql/pglite');
+      PGlite = mod.PGlite;
+    } catch (importErr) {
+      const candidates = [
+        path.resolve(process.cwd(), 'server/node_modules/@electric-sql/pglite/dist/index.js'),
+        path.resolve(process.cwd(), 'node_modules/@electric-sql/pglite/dist/index.js'),
+      ];
+      const found = candidates.find((c) => fs.existsSync(c));
+      if (found) {
+        const fileUrl = 'file:///' + found.replace(/\\/g, '/');
+        const mod = await import(fileUrl);
+        PGlite = mod.PGlite;
+      } else {
+        throw importErr;
+      }
+    }
     let dataDir = process.env.PGLITE_DATA_DIR;
     if (!dataDir) {
-      const workspacePath = path.resolve(__dirname, '../../../data/pglite');
+      const workspacePath = path.resolve(process.cwd(), 'data/pglite');
       // If path contains parentheses, use LOCALAPPDATA / TEMP to avoid Emscripten WASM aborts
       if (workspacePath.includes('(') || workspacePath.includes(')')) {
         dataDir = path.join(process.env.LOCALAPPDATA || process.env.TEMP || 'C:/Users/Public', 'pulseboard_pglite');
@@ -74,6 +111,7 @@ export async function getDb() {
         dataDir = workspacePath;
       }
     }
+
 
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
@@ -94,6 +132,7 @@ export async function getDb() {
       isConnected = true;
       dbEngine = 'pglite';
       console.log(`[DB] Connected to embedded PostgreSQL engine (PGlite) at ${dataDir}`);
+      await runMigrations();
       return { query, pool: null, dbEngine };
     } catch (fsErr) {
       console.warn('[DB] Persistent PGlite initialization failed, falling back to in-memory PGlite:', fsErr.message);
@@ -102,6 +141,7 @@ export async function getDb() {
       isConnected = true;
       dbEngine = 'pglite-memory';
       console.log('[DB] Connected to in-memory embedded PostgreSQL engine (PGlite)');
+      await runMigrations();
       return { query, pool: null, dbEngine };
     }
   } catch (err) {
@@ -167,13 +207,15 @@ export async function exec(sql) {
 }
 
 export async function runMigrations() {
-  const schemaPath = path.resolve(__dirname, 'schema.sql');
+  const schemaPath = resolveSchemaPath();
   const schemaSql = fs.readFileSync(schemaPath, 'utf8');
 
-  console.log('[DB] Running database migrations...');
+  console.log(`[DB] Running database migrations from ${schemaPath}...`);
   await exec(schemaSql);
   console.log('[DB] Migrations executed successfully.');
 }
+
+
 
 export function getPool() {
   return pool;
