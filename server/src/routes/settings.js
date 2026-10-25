@@ -147,8 +147,93 @@ router.patch('/', async (req, res, next) => {
   }
 });
 
-// POST /api/settings/profile-picture - Upload or replace profile picture
-router.post('/profile-picture', handleAvatarUpload, async (req, res, next) => {
+// GET /api/settings/profile-picture/signature - Request a signed upload ticket for Cloudinary direct upload
+router.get('/profile-picture/signature', (req, res, next) => {
+  try {
+    const signData = storage.createUploadSignature({ userId: req.userId });
+    if (!signData) {
+      return res.json({
+        directUploadSupported: false,
+        message: 'Cloudinary credentials not configured; fallback to standard multipart upload',
+      });
+    }
+    return res.json({
+      directUploadSupported: true,
+      ...signData,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Direct upload commit handler for Cloudinary signed uploads
+async function handleDirectUploadCommit(req, res, next) {
+  try {
+    const { publicId, avatarUrl } = req.body || {};
+
+    if (!publicId || !avatarUrl) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        message: 'Both publicId and avatarUrl are required.',
+      });
+    }
+
+    // Security check: Verify that publicId strictly belongs to this authenticated user!
+    const sanitizedUserId = req.userId.replace(/[^a-zA-Z0-9]/g, '');
+    if (!publicId.includes(`avatar_${sanitizedUserId}_`)) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'Security validation failed: asset identifier does not match authenticated user.',
+      });
+    }
+
+    // Validate URL scheme: must start with https://res.cloudinary.com/
+    if (!avatarUrl.startsWith('https://res.cloudinary.com/')) {
+      return res.status(400).json({
+        error: 'Bad Request',
+        message: 'Invalid image URL domain.',
+      });
+    }
+
+    // 1. Fetch current avatar info for the authenticated user
+    const currentRes = await query(
+      'SELECT avatar_url, avatar_key FROM users WHERE id = $1',
+      [req.userId]
+    );
+    const previousKey = currentRes.rows[0]?.avatar_key;
+
+    // 2. Update database record with new image URL and storage key
+    try {
+      await query(
+        `UPDATE users
+         SET avatar_url = $1, avatar_key = $2, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $3`,
+        [avatarUrl, publicId, req.userId]
+      );
+    } catch (dbErr) {
+      // Failure-safe cleanup: If database commit fails, delete the newly uploaded object
+      await storage.deleteAvatar(publicId, req.userId).catch(() => {});
+      throw dbErr;
+    }
+
+    // 3. Clean up previous avatar object only after new record is committed
+    if (previousKey && previousKey !== publicId) {
+      storage.deleteAvatar(previousKey, req.userId).catch((err) => {
+        console.warn('[STORAGE] Non-critical warning deleting old avatar:', err.message);
+      });
+    }
+
+    return res.json({
+      message: 'Profile picture updated successfully',
+      avatarUrl,
+    });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// Multipart buffer commit handler (for local dev / automated test suite)
+async function handleMultipartUploadCommit(req, res, next) {
   let uploadedAvatar = null;
   try {
     // 1. Fetch current avatar info for the authenticated user
@@ -194,7 +279,19 @@ router.post('/profile-picture', handleAvatarUpload, async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+}
+
+// POST /api/settings/profile-picture - Upload or replace profile picture (supports signed direct upload & multipart)
+router.post('/profile-picture', (req, res, next) => {
+  if (req.is('application/json') || (req.body && req.body.publicId)) {
+    return handleDirectUploadCommit(req, res, next);
+  }
+  return handleAvatarUpload(req, res, (err) => {
+    if (err) return next(err);
+    return handleMultipartUploadCommit(req, res, next);
+  });
 });
+
 
 // DELETE /api/settings/profile-picture - Remove profile picture and restore default avatar
 router.delete('/profile-picture', async (req, res, next) => {

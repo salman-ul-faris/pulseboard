@@ -41,20 +41,22 @@ export function createApp() {
     })
   );
 
-  // Allowed origins for CORS (Vercel frontend, local development, Render)
+  // Allowed origins for CORS (Netlify frontend, Vercel, local development, Render)
   const allowedOrigins = [
     process.env.CLIENT_ORIGIN,
     'http://localhost:5173',
     'http://localhost:5000',
     'http://localhost:3000',
+    'http://localhost:8888',
     'http://127.0.0.1:5173',
     'http://127.0.0.1:5000',
+    'http://127.0.0.1:8888',
   ].filter(Boolean);
 
   const isOriginAllowed = (origin) => {
     if (!origin) return true; // Mobile, curl, same-origin
     if (allowedOrigins.includes(origin)) return true;
-    if (origin.endsWith('.vercel.app') || origin.endsWith('.onrender.com')) return true;
+    if (origin.endsWith('.netlify.app') || origin.endsWith('.vercel.app') || origin.endsWith('.onrender.com')) return true;
     return false;
   };
 
@@ -90,8 +92,9 @@ export function createApp() {
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-  // Session store configuration: PostgreSQL persistent store for Render/Postgres, Memory fallback for test/dev
-  const isProduction = process.env.NODE_ENV === 'production';
+  // Session store configuration: PostgreSQL persistent store for Netlify/Postgres, Memory fallback for test/dev
+  const isServerless = Boolean(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const isProduction = process.env.NODE_ENV === 'production' || isServerless;
   const pool = getPool();
   let sessionStore = undefined;
 
@@ -105,8 +108,8 @@ export function createApp() {
     console.log('[SESSION] Using PostgreSQL persistent session store (connect-pg-simple)');
   }
 
-  // Cross-origin cookie policy: Vercel frontend + Render backend requires SameSite: None & Secure: true
-  const sameSiteConfig = process.env.COOKIE_SAMESITE || (isProduction ? 'none' : 'lax');
+  // Cookie policy: Netlify hosts frontend & functions on same origin, allowing secure Lax cookies
+  const sameSiteConfig = process.env.COOKIE_SAMESITE || (isServerless ? 'lax' : (isProduction ? 'none' : 'lax'));
   const cookieSecure = sameSiteConfig === 'none' ? true : (isProduction && process.env.COOKIE_SECURE !== 'false');
 
   app.use(
@@ -126,12 +129,26 @@ export function createApp() {
     })
   );
 
+
+  // Key generator that safely supports Netlify Functions, proxies, and mock tests
+  const getClientIp = (req) => {
+    return (
+      req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+      req.headers['client-ip'] ||
+      req.ip ||
+      req.socket?.remoteAddress ||
+      '127.0.0.1'
+    );
+  };
+
   // Rate limiter for authentication endpoints
   const authLimiter = rateLimit({
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100, // limit each IP to 100 requests per window
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: getClientIp,
+    validate: { ip: false, xForwardedForHeader: false },
     message: {
       error: 'Too Many Requests',
       message: 'Too many authentication attempts. Please try again in a few minutes.',
@@ -144,11 +161,14 @@ export function createApp() {
     max: 30, // 30 avatar operations per 15 minutes
     standardHeaders: true,
     legacyHeaders: false,
+    keyGenerator: getClientIp,
+    validate: { ip: false, xForwardedForHeader: false },
     message: {
       error: 'Too Many Requests',
       message: 'Too many profile picture update requests. Please wait a few minutes.',
     },
   });
+
 
   // Safe static serving for local avatar storage fallback (development / testing)
   const localUploadsDir = path.resolve(__dirname, '../../../data/uploads/avatars');

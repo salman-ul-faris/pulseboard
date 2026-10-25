@@ -1,8 +1,20 @@
 import multer from 'multer';
-import sharp from 'sharp';
 
 // Max file size: 5 MB
 export const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+let sharpInstance = null;
+async function getSharp() {
+  if (sharpInstance) return sharpInstance;
+  try {
+    const mod = await import('sharp');
+    sharpInstance = mod.default || mod;
+    return sharpInstance;
+  } catch (err) {
+    console.warn('[STORAGE] Sharp image library is not loaded in this runtime environment:', err.message);
+    return null;
+  }
+}
 
 const storage = multer.memoryStorage();
 
@@ -121,6 +133,17 @@ export function handleAvatarUpload(req, res, next) {
     }
 
     try {
+      const sharp = await getSharp();
+      if (!sharp) {
+        // Fallback if sharp is not available in serverless: use validated raster buffer
+        req.processedAvatar = {
+          buffer: req.file.buffer,
+          format: detectedFormat,
+          size: req.file.buffer.length,
+        };
+        return next();
+      }
+
       // Decode, sanitize, auto-orient, resize, and re-encode with Sharp
       const processedBuffer = await sharp(req.file.buffer, {
         failOn: 'error',
@@ -155,6 +178,7 @@ export function handleAvatarUpload(req, res, next) {
     }
   });
 }
+
 
 export default {
   handleAvatarUpload,

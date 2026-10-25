@@ -7,31 +7,85 @@ import { v2 as cloudinary } from 'cloudinary';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Check if Cloudinary credentials are configured
-const isCloudinaryConfigured = Boolean(
-  process.env.CLOUDINARY_CLOUD_NAME &&
-  process.env.CLOUDINARY_API_KEY &&
-  process.env.CLOUDINARY_API_SECRET
-);
-
-if (isCloudinaryConfigured) {
-  cloudinary.config({
-    cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-    api_key: process.env.CLOUDINARY_API_KEY,
-    api_secret: process.env.CLOUDINARY_API_SECRET,
-    secure: true,
-  });
-  console.log('[STORAGE] Persistent Cloudinary storage initialized for cloud deployment.');
-} else {
-  console.warn('[STORAGE] Cloudinary credentials not detected. Operating with persistent local storage adapter for development/testing.');
+export function isStorageCloudConfigured() {
+  return Boolean(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET
+  );
 }
+
+function ensureCloudinaryConfigured() {
+  if (isStorageCloudConfigured()) {
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+      secure: true,
+    });
+    return true;
+  }
+  return false;
+}
+
+// Initial configuration attempt
+ensureCloudinaryConfigured();
 
 // Local storage directory setup for dev / test fallback
 const localUploadsDir = path.resolve(__dirname, '../../../data/uploads/avatars');
-if (!isCloudinaryConfigured) {
+if (!isStorageCloudConfigured()) {
   if (!fs.existsSync(localUploadsDir)) {
     fs.mkdirSync(localUploadsDir, { recursive: true });
   }
+}
+
+/**
+ * Generate a cryptographically signed direct upload ticket for Cloudinary.
+ * Keeps CLOUDINARY_API_SECRET strictly on the server while allowing the browser
+ * to upload directly to Cloudinary's CDN, avoiding serverless payload & memory limits.
+ * @param {Object} params
+ * @param {string} params.userId - Authenticated user UUID
+ * @returns {Object | null} Signed upload parameters or null if Cloudinary is not configured
+ */
+export function createUploadSignature({ userId }) {
+  if (!ensureCloudinaryConfigured()) {
+    return null;
+  }
+
+  if (!userId) {
+    throw new Error('userId is required to generate avatar upload signature');
+  }
+
+  const timestamp = Math.round(Date.now() / 1000);
+  const randomSuffix = crypto.randomBytes(8).toString('hex');
+  const sanitizedUserId = userId.replace(/[^a-zA-Z0-9]/g, '');
+  const publicId = `avatars/avatar_${sanitizedUserId}_${timestamp}_${randomSuffix}`;
+  const transformation = 'c_fill,g_face,w_400,h_400,q_auto,f_webp';
+  const tags = `user_${sanitizedUserId},pulseboard_avatar`;
+
+  const paramsToSign = {
+    folder: 'avatars',
+    public_id: publicId,
+    tags,
+    timestamp,
+    transformation,
+  };
+
+  const signature = cloudinary.utils.api_sign_request(
+    paramsToSign,
+    process.env.CLOUDINARY_API_SECRET
+  );
+
+  return {
+    signature,
+    timestamp,
+    apiKey: process.env.CLOUDINARY_API_KEY,
+    cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+    publicId,
+    folder: 'avatars',
+    transformation,
+    tags,
+  };
 }
 
 /**
@@ -50,7 +104,8 @@ export async function uploadAvatar({ buffer, userId }) {
   const safeFilename = `user_${userId.replace(/[^a-zA-Z0-9]/g, '')}_${randomSuffix}`;
 
   // 1. Cloudinary upload if configured
-  if (isCloudinaryConfigured) {
+  if (isStorageCloudConfigured()) {
+    ensureCloudinaryConfigured();
     return new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
@@ -107,7 +162,8 @@ export async function deleteAvatar(key, userId) {
     return;
   }
 
-  if (isCloudinaryConfigured) {
+  if (isStorageCloudConfigured()) {
+    ensureCloudinaryConfigured();
     try {
       await cloudinary.uploader.destroy(key, { invalidate: true });
     } catch (err) {
@@ -128,15 +184,10 @@ export async function deleteAvatar(key, userId) {
   }
 }
 
-/**
- * Check whether cloud object storage is configured
- */
-export function isStorageCloudConfigured() {
-  return isCloudinaryConfigured;
-}
-
 export default {
   uploadAvatar,
   deleteAvatar,
+  createUploadSignature,
   isStorageCloudConfigured,
 };
+

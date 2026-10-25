@@ -61,6 +61,8 @@ export const api = {
   settings: {
     get: () => request('/settings', { method: 'GET' }),
     update: (settingsData) => request('/settings', { method: 'PATCH', body: JSON.stringify(settingsData) }),
+    getProfilePictureSignature: () => request('/settings/profile-picture/signature', { method: 'GET' }),
+    commitProfilePicture: (data) => request('/settings/profile-picture', { method: 'POST', body: JSON.stringify(data) }),
     uploadProfilePicture: async (formData) => {
       const url = `${BASE_URL}/settings/profile-picture`;
       try {

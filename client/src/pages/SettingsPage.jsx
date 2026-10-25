@@ -130,7 +130,7 @@ export default function SettingsPage({ onToggleSidebar }) {
     }
   }
 
-  // Upload or replace profile picture to backend
+  // Upload or replace profile picture (uses direct signed Cloudinary upload on serverless, with multipart fallback)
   async function handleSaveAvatar() {
     if (!selectedFile) return;
 
@@ -138,20 +138,68 @@ export default function SettingsPage({ onToggleSidebar }) {
     setAvatarError(null);
     setMessage(null);
 
-    const formData = new FormData();
-    formData.append('avatar', selectedFile);
-
     try {
-      const res = await api.settings.uploadProfilePicture(formData);
-      updateUserLocally({ avatarUrl: res.avatarUrl });
-      setMessage('Profile picture updated and saved successfully.');
-      handleCancelPreview();
+      // 1. Check if backend provides a signed Cloudinary direct upload ticket
+      let signData = null;
+      try {
+        signData = await api.settings.getProfilePictureSignature();
+      } catch (_) {
+        signData = null;
+      }
+
+      if (signData && signData.directUploadSupported) {
+        // Direct Cloudinary CDN upload - completely bypasses Netlify Functions payload limits
+        const cloudFormData = new FormData();
+        cloudFormData.append('file', selectedFile);
+        cloudFormData.append('api_key', signData.apiKey);
+        cloudFormData.append('timestamp', signData.timestamp);
+        cloudFormData.append('signature', signData.signature);
+        cloudFormData.append('public_id', signData.publicId);
+        cloudFormData.append('folder', signData.folder);
+        cloudFormData.append('transformation', signData.transformation);
+        cloudFormData.append('tags', signData.tags);
+
+        const uploadRes = await fetch(
+          `https://api.cloudinary.com/v1_1/${signData.cloudName}/image/upload`,
+          {
+            method: 'POST',
+            body: cloudFormData,
+          }
+        );
+
+        if (!uploadRes.ok) {
+          const uploadErr = await uploadRes.json().catch(() => ({}));
+          throw new Error(uploadErr.error?.message || 'Failed to upload image directly to cloud storage.');
+        }
+
+        const uploadResult = await uploadRes.json();
+
+        // Commit verified upload to PulseBoard PostgreSQL backend
+        const commitRes = await api.settings.commitProfilePicture({
+          publicId: uploadResult.public_id,
+          avatarUrl: uploadResult.secure_url,
+        });
+
+        updateUserLocally({ avatarUrl: commitRes.avatarUrl });
+        setMessage('Profile picture updated and saved successfully.');
+        handleCancelPreview();
+      } else {
+        // Standard multipart upload fallback (for dev or local testing)
+        const formData = new FormData();
+        formData.append('avatar', selectedFile);
+
+        const res = await api.settings.uploadProfilePicture(formData);
+        updateUserLocally({ avatarUrl: res.avatarUrl });
+        setMessage('Profile picture updated and saved successfully.');
+        handleCancelPreview();
+      }
     } catch (err) {
       setAvatarError(err.message || 'Failed to upload profile picture.');
     } finally {
       setAvatarUploading(false);
     }
   }
+
 
   // Remove profile picture and restore initials
   async function handleRemoveAvatar() {

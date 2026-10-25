@@ -1,10 +1,12 @@
 # PulseBoard — Precision Productivity & Task Intelligence Platform
 
-PulseBoard is an enterprise-grade, full-stack productivity web application designed with a deep-navy aesthetic, electric-mint accents, real PostgreSQL persistence, and secure session authentication.
+PulseBoard is an enterprise-grade, full-stack productivity web application designed with a deep-navy aesthetic, electric-mint accents, persistent PostgreSQL data storage, secure session authentication, and serverless Cloudinary image uploads.
 
-The codebase is organized as a unified monorepo for dual deployment:
-- **Frontend** deployed on **Vercel** (`client/` root)
-- **Backend** deployed on **Render** (`server/` root) with managed **PostgreSQL**
+The codebase is organized as a unified monorepo optimized for **Netlify Serverless Deployment**:
+- **Frontend**: High-speed CDN edge hosting built with **React 18 + Vite** (`client/dist`)
+- **Backend API**: Serverless Express API running on **Netlify Functions** (`netlify/functions/api.js`)
+- **Database**: Managed persistent **PostgreSQL** (Neon, Supabase, Render Postgres, AWS RDS)
+- **Profile Picture Storage**: Direct-signed cloud uploads via **Cloudinary**
 
 ---
 
@@ -12,37 +14,43 @@ The codebase is organized as a unified monorepo for dual deployment:
 
 ```
 pulseboard/
-├── client/                     # Frontend (React + Vite) — Deployed to Vercel
+├── client/                     # Frontend (React 18 + Vite)
 │   ├── src/
 │   │   ├── components/         # Logo, BackgroundWave, Header, Sidebar, TaskCard, TaskModal, SummaryCards
 │   │   ├── context/            # AuthContext (session, user, settings)
 │   │   ├── pages/              # LoginPage, RegisterPage, DashboardPage, SettingsPage
-│   │   ├── services/           # API fetch client (VITE_API_URL + credentials: 'include')
+│   │   ├── services/           # API fetch client (same-origin /api + credentials: 'include')
 │   │   ├── App.jsx             # Shell & view orchestrator
 │   │   ├── index.css           # Design tokens, variables, & reduced-motion support
 │   │   └── main.jsx
 │   ├── index.html
-│   ├── vercel.json             # Vercel SPA rewrites & security headers
+│   ├── vercel.json             # Vercel SPA rewrites & security headers (retained for compatibility)
 │   ├── vite.config.js
 │   ├── .env.example
 │   └── package.json
-├── server/                     # Backend (Node.js + Express) — Deployed to Render
+├── netlify/                    # Netlify Serverless Architecture
+│   └── functions/
+│       └── api.js              # Serverless Express entrypoint (serverless-http adapter + DB pool caching)
+├── server/                     # Backend Logic & Database Layer
 │   ├── src/
-│   │   ├── db/                 # DB connection pool (PostgreSQL + PGlite fallback), migrations
-│   │   ├── middleware/         # Auth guard, Zod validation, error handler
+│   │   ├── db/                 # DB connection pool (serverless tuned), schema, migrations
+│   │   ├── middleware/         # Auth guard, Zod validation, upload security, error handler
 │   │   ├── routes/             # Auth, Tasks, Settings, Health
-│   │   ├── app.js              # Express app, Helmet, CORS, Session Store, CSRF Origin check
-│   │   └── index.js            # Server entry point, DB auto-migration bootstrapper
+│   │   ├── services/           # Storage service (Cloudinary signed uploads & fallback)
+│   │   ├── app.js              # Express app factory, Helmet, CORS, Session Store, CSRF Origin check
+│   │   └── index.js            # Standalone server entry point (for local development)
 │   ├── migrations/             # SQL schema migrations (users, tasks, user_settings, session)
-│   ├── tests/                  # Automated test suite (12 critical acceptance tests)
+│   ├── tests/                  # Automated test suite (31 comprehensive tests)
 │   ├── .env.example
 │   └── package.json
-├── render.yaml                 # Render Blueprint configuration
+├── netlify.toml                # Netlify build, routing redirects (/api/*), and CDN headers
+├── render.yaml                 # Render Blueprint configuration (retained for backward compatibility)
 ├── .gitignore
 ├── .env.example
-├── package.json                # Root orchestrator scripts
+├── package.json                # Root orchestrator scripts & serverless dependencies
 └── README.md
 ```
+
 
 ---
 
@@ -160,12 +168,12 @@ Open [http://localhost:5000](http://localhost:5000) in your browser.
 
 ## 6. Automated Testing
 
-Run the full automated test suite verifying all 23 critical acceptance criteria (Core Platform + Security & Profile Picture):
+Run the full automated test suite verifying all 31 critical acceptance criteria across platform, security, profile pictures, and serverless runtime:
 ```bash
 npm test
 ```
 
-### Verified Test Cases (23 Passing Tests):
+### Verified Test Cases (31 Passing Tests):
 
 **Platform & Security Tests (`server/tests/api.test.js`):**
 1. `Registration creates a user with a password hash and safe user object`
@@ -194,72 +202,61 @@ npm test
 22. `Upload and storage errors do not leak stack traces or server paths`
 23. `Failure-safe replacement: DB failure leaves the previous avatar intact without orphan destruction`
 
+**Netlify Serverless Architecture & Cloudinary Tests (`server/tests/serverless.test.js`):**
+24. `Netlify handler successfully handles GET /api/health and normalizes path`
+25. `Netlify handler handles registration, login, and issues same-origin Lax cookie`
+26. `Session persists across separate serverless function invocations via shared store`
+27. `CSRF & origin verification rejects state-changing requests from untrusted origins`
+28. `Direct upload signature endpoint produces valid signature parameters`
+29. `Direct upload commit strictly enforces ownership and rejects cross-user asset tampering`
+30. `Direct upload commit rejects untrusted image domains`
+31. `Concurrent requests succeed without exhausting connection pool`
+
 ---
 
-## 7. GitHub Repository Setup
+## 7. Netlify Serverless Deployment (Recommended)
 
-To push your local repository to GitHub:
+PulseBoard is designed for seamless deployment on Netlify with same-origin frontend hosting and serverless functions:
 
-1. Create a new empty repository on [GitHub](https://github.com/new) named `pulseboard`. Do not initialize it with a README, license, or .gitignore (these already exist locally).
-2. In your terminal at the root of `pulseboard`, run:
+### Step 1: Provision Persistent PostgreSQL Database
+1. Provision a PostgreSQL 14+ database using your preferred cloud provider (e.g., [Neon](https://neon.tech), [Supabase](https://supabase.com), or Render PostgreSQL).
+2. Copy your pooled connection URL (e.g., `postgresql://user:password@ep-xyz.neon.tech/pulseboard?sslmode=require`).
+3. Run the initial database migration from your local terminal:
    ```bash
-   git remote add origin https://github.com/<YOUR_GITHUB_USERNAME>/pulseboard.git
-   git push -u origin main
+   DATABASE_URL="<your_postgres_connection_url>" npm run migrate
    ```
 
----
-
-## 8. Deployment: Render (Backend + PostgreSQL)
-
-### Step 1: Create PostgreSQL Database on Render
-1. Log into your [Render Dashboard](https://dashboard.render.com).
-2. Click **New +** > **PostgreSQL**.
-3. Name: `pulseboard-db`
-4. Database: `pulseboard`
-5. User: `pulseboard_user`
-6. Region: Choose the region closest to you.
-7. Click **Create Database**.
-8. Once provisioned, copy the **Internal Database URL** (or External if connecting remotely).
-
-### Step 2: Deploy Backend Web Service on Render
-1. In Render Dashboard, click **New +** > **Web Service**.
-2. Connect your GitHub repository `pulseboard`.
-3. Configure the service:
-   - **Name**: `pulseboard-api`
-   - **Root Directory**: `server`
-   - **Environment**: `Node`
-   - **Build Command**: `npm install`
-   - **Start Command**: `npm start`
-   - **Health Check Path**: `/api/health`
-4. Under **Environment Variables**, add:
+### Step 2: Deploy Site on Netlify
+1. Log into your [Netlify Dashboard](https://app.netlify.com).
+2. Click **Add new site** > **Import an existing project**.
+3. Select **GitHub** and authorize access to `salman-ul-faris/pulseboard`.
+4. In the build settings:
+   - **Branch**: `main`
+   - **Base directory**: *(Leave empty - project root)*
+   - **Build command**: `npm run build`
+   - **Publish directory**: `client/dist`
+   - **Functions directory**: `netlify/functions` *(automatically detected from `netlify.toml`)*
+5. Click **Site configuration** > **Environment variables** > **Add a variable**, and configure:
    - `NODE_ENV`: `production`
-   - `DATABASE_URL`: *(Paste the PostgreSQL connection string from Step 1)*
-   - `SESSION_SECRET`: *(A random 32+ character secret string)*
-   - `CLIENT_ORIGIN`: `https://<YOUR_VERCEL_APP>.vercel.app`
+   - `DATABASE_URL`: *(Your persistent PostgreSQL connection string)*
+   - `SESSION_SECRET`: *(A secure 32+ character random string)*
    - `COOKIE_SECURE`: `true`
-   - `COOKIE_SAMESITE`: `none`
-   - `CLOUDINARY_CLOUD_NAME`: *(Your Cloudinary Cloud Name)*
-   - `CLOUDINARY_API_KEY`: *(Your Cloudinary API Key)*
-   - `CLOUDINARY_API_SECRET`: *(Your Cloudinary API Secret)*
-5. Click **Deploy Web Service**.
-6. Note your backend URL (e.g., `https://pulseboard-api.onrender.com`).
+   - `COOKIE_SAMESITE`: `lax`
+   - `DB_POOL_MAX`: `2`
+   - `CLOUDINARY_CLOUD_NAME`: *(Your Cloudinary cloud name)*
+   - `CLOUDINARY_API_KEY`: *(Your Cloudinary API key)*
+   - `CLOUDINARY_API_SECRET`: *(Your Cloudinary API secret)*
+6. Click **Deploy Site**. Netlify will build the Vite frontend, bundle the serverless Express API function, and deploy to your live URL (e.g. `https://pulseboard.netlify.app`).
 
-*(Alternatively, use the included [`render.yaml`](file:///e:/ai-project%20(riafy)/pulseboard/render.yaml) by creating a **Blueprint** on Render).*
+### Memory & Cold-Start Optimizations
+- **PGlite Disabled in Production**: Prevents loading a 400MB+ WebAssembly linear memory heap inside functions.
+- **Connection Pool Tuning**: `DB_POOL_MAX=2` prevents connection exhaustion across concurrent function instances.
+- **Direct Cloudinary Uploads**: Images are signed on the backend and uploaded directly to Cloudinary's global CDN from the client, avoiding Lambda's 6 MB payload limits and Sharp binary overhead in serverless execution.
+- **Event Loop Management**: `context.callbackWaitsForEmptyEventLoop = false` ensures sub-second response times while preserving PostgreSQL connection pools between warm invocations.
 
 ---
 
-## 9. Deployment: Vercel (Frontend)
+## 8. Alternative Deployments (Render & Vercel)
 
-1. Log into your [Vercel Dashboard](https://vercel.com).
-2. Click **Add New...** > **Project**.
-3. Import your GitHub repository `pulseboard`.
-4. In the Project Configuration:
-   - **Framework Preset**: `Vite`
-   - **Root Directory**: Click *Edit* and select `client`
-   - **Build Command**: `npm run build` (or leave default)
-   - **Output Directory**: `dist`
-5. Under **Environment Variables**, add:
-   - `VITE_API_URL`: `https://pulseboard-api.onrender.com` *(Your Render backend URL)*
-6. Click **Deploy**.
-7. Vercel will build and deploy the frontend. Single-page navigation and URL refreshes are automatically handled via [`client/vercel.json`](file:///e:/ai-project%20(riafy)/pulseboard/client/vercel.json).
-8. Copy your live Vercel domain (e.g. `https://pulseboard.vercel.app`) and ensure it matches the `CLIENT_ORIGIN` variable in your Render backend settings.
+Configuration files for Render (`render.yaml`) and Vercel (`client/vercel.json`) remain intact in the repository for legacy environments.
+

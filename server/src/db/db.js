@@ -19,15 +19,22 @@ export async function getDb() {
   }
 
   const databaseUrl = process.env.DATABASE_URL;
+  const isServerless = Boolean(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME);
+  const isProd = process.env.NODE_ENV === 'production' || isServerless;
+
+  // In serverless, limit pool size to avoid exhausting PostgreSQL connection limits across function instances
+  const poolMax = process.env.DB_POOL_MAX
+    ? parseInt(process.env.DB_POOL_MAX, 10)
+    : (isServerless ? 2 : 10);
 
   if (databaseUrl && !databaseUrl.includes('localhost:5432') && !databaseUrl.includes('127.0.0.1:5432')) {
     try {
-      const isProd = process.env.NODE_ENV === 'production';
+      const isRemote = isProd || databaseUrl.includes('render.com') || databaseUrl.includes('neon.tech') || databaseUrl.includes('supabase.co');
       pool = new Pool({
         connectionString: databaseUrl,
-        ssl: isProd ? { rejectUnauthorized: false } : false,
-        max: 10,
-        idleTimeoutMillis: 30000,
+        ssl: isRemote ? { rejectUnauthorized: false } : false,
+        max: poolMax,
+        idleTimeoutMillis: isServerless ? 10000 : 30000,
         connectionTimeoutMillis: 5000,
       });
 
@@ -35,16 +42,26 @@ export async function getDb() {
       if (res.rows.length > 0) {
         isConnected = true;
         dbEngine = 'postgresql';
-        console.log('[DB] Connected to PostgreSQL via DATABASE_URL');
+        console.log(`[DB] Connected to PostgreSQL via DATABASE_URL (engine: postgresql, poolMax: ${poolMax})`);
         return { query, pool, dbEngine };
       }
     } catch (err) {
       console.warn('[DB] Failed to connect to PostgreSQL via DATABASE_URL:', err.message);
       pool = null;
+      if (isProd) {
+        throw new Error(`[DB FATAL] Production database connection failed: ${err.message}`);
+      }
     }
   }
 
-  // Fallback to embedded PGlite (real Postgres engine in Node WASM with persistence)
+  // Strict production guard: NEVER load or initialize PGlite WASM in production or Netlify functions
+  if (isProd) {
+    throw new Error(
+      '[DB FATAL] DATABASE_URL is not configured or reachable. Embedded PGlite engine is disabled in production to protect memory.'
+    );
+  }
+
+  // Fallback to embedded PGlite for local development and automated testing only
   try {
     const { PGlite } = await import('@electric-sql/pglite');
     let dataDir = process.env.PGLITE_DATA_DIR;
@@ -92,6 +109,7 @@ export async function getDb() {
     throw err;
   }
 }
+
 
 export async function query(text, params = []) {
   if (!isConnected) {
