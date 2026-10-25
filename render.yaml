@@ -1,0 +1,31 @@
+# Render Blueprint for PulseBoard Backend & Database
+services:
+  - type: web
+    name: pulseboard-api
+    env: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: pulseboard-db
+          property: connectionString
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: CLIENT_ORIGIN
+        value: https://pulseboard.vercel.app
+      - key: COOKIE_SECURE
+        value: true
+      - key: COOKIE_SAMESITE
+        value: none
+
+databases:
+  - name: pulseboard-db
+    plan: free
+    databaseName: pulseboard
+    user: pulseboard_user
